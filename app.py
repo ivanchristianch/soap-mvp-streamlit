@@ -9,10 +9,16 @@ st.title("🩺 SOAP Notation MVP")
 st.caption("Text → SOAP (S/O/A/P) → PDF — ringan untuk pitching")
 
 # --- OpenAI client (pakai Secrets di Streamlit Cloud) ---
-if "OPENAI_API_KEY" not in st.secrets:
-    st.error("OPENAI_API_KEY belum diset. Set di Streamlit Cloud → App → Settings → Secrets.")
+api_key = st.secrets.get("OPENAI_API_KEY", "")
+if not api_key:
+    st.error("OPENAI_API_KEY belum diset di Settings → Secrets (Streamlit Cloud).")
     st.stop()
-client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
+
+# tampilkan indikator aman (masked)
+st.caption(f"🔑 OpenAI key loaded: sk-****{api_key[-6:]}")
+
+from openai import OpenAI
+client = OpenAI(api_key=api_key)
 
 # --- Input form ---
 with st.form("soap_form"):
@@ -31,18 +37,25 @@ with st.form("soap_form"):
     submitted = st.form_submit_button("🧠 Generate SOAP")
 
 def llm_to_soap(raw_text: str):
-    system = (
-        "Kamu asisten dokumentasi medis. Kembalikan hasil HANYA JSON valid "
-        "dengan keys persis: Subjective, Objective, Assessment, Plan. "
-        "Ringkas & klinis, jangan menambah data fiktif."
-    )
+    system = ("Kamu asisten dokumentasi medis. Kembalikan hasil HANYA JSON valid "
+              "dengan keys persis: Subjective, Objective, Assessment, Plan. "
+              "Ringkas & klinis, jangan menambah data fiktif.")
     user = f'Map teks klinis berikut menjadi SOAP. Balas HANYA JSON valid.\n\nTeks:\n""" {raw_text.strip()} """'
-    resp = client.chat.completions.create(
-        model="gpt-4o-mini",
-        temperature=0,
-        messages=[{"role":"system","content":system},{"role":"user","content":user}],
-    )
-    return resp.choices[0].message.content.strip()
+    try:
+        resp = client.chat.completions.create(
+            model="gpt-4o-mini",
+            temperature=0,
+            messages=[{"role":"system","content":system},{"role":"user","content":user}],
+        )
+        return resp.choices[0].message.content.strip()
+    except Exception as e:
+        import openai as _openai
+        if isinstance(e, _openai.AuthenticationError):
+            st.error("Autentikasi ke OpenAI gagal. Cek kembali OPENAI_API_KEY di Settings → Secrets, lalu Restart app.")
+        else:
+            st.error(f"Gagal memanggil OpenAI: {e}")
+        raise
+
 
 def parse_soap(s: str):
     try:
