@@ -3,6 +3,34 @@ from datetime import datetime
 import streamlit as st
 from fpdf import FPDF
 import requests
+from streamlit_mic_recorder import mic_recorder
+
+st.divider()
+st.subheader("🎙️ Rekam anamnesis pasien (opsional)")
+
+audio_bytes = mic_recorder(
+    start_prompt="🎤 Mulai rekam",
+    stop_prompt="⏹️ Berhenti rekam",
+    just_once=True,
+    key="mic_recorder"
+)
+
+if audio_bytes:
+    st.audio(audio_bytes, format="audio/wav")
+    with st.spinner("Mengubah suara menjadi teks..."):
+        try:
+            voice_text = speech_to_text(audio_bytes)
+            st.success("✅ Transkripsi selesai!")
+            st.write(voice_text)
+
+            # Optional: konversi langsung ke SOAP
+            if st.button("🧠 Generate SOAP dari suara"):
+                raw = llm_to_soap(voice_text)
+                S, O, A, P, ok = parse_soap(raw)
+                st.success("Berhasil dibuat dari rekaman suara!")
+                st.write(f"Subjective: {S}\nObjective: {O}\nAssessment: {A}\nPlan: {P}")
+        except Exception as e:
+            st.error(f"Gagal memproses audio: {e}")
 def speech_to_text(audio_bytes):
     """Ubah suara (WAV/MP3) jadi teks pakai model whisper kecil di Hugging Face"""
     url = "https://router.huggingface.co/v1/audio/transcriptions"
