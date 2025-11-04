@@ -7,3 +7,4 @@ streamlit-mic-recorder
 ffmpeg-python
 pydub
 requests
+huggingface_hub>=0.25.0
