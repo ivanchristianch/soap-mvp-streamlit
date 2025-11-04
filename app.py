@@ -5,30 +5,47 @@ from fpdf import FPDF
 import requests
 from streamlit_mic_recorder import mic_recorder
 
+def _as_bytes(a):
+    """Normalisasi keluaran mic_recorder menjadi bytes (WAV)."""
+    if a is None:
+        return None
+    if isinstance(a, (bytes, bytearray)):
+        return a
+    if isinstance(a, dict):
+        # streamlit-mic-recorder mengembalikan {'bytes': b'...', 'sample_rate': 16000, ...}
+        if "bytes" in a and isinstance(a["bytes"], (bytes, bytearray)):
+            return a["bytes"]
+        if "audio" in a and isinstance(a["audio"], (bytes, bytearray)):
+            return a["audio"]
+    if hasattr(a, "getvalue"):
+        return a.getvalue()
+    return None
+
 st.divider()
 st.subheader("🎙️ Rekam anamnesis pasien (opsional)")
 
-audio_bytes = mic_recorder(
+audio_obj = mic_recorder(
     start_prompt="🎤 Mulai rekam",
     stop_prompt="⏹️ Berhenti rekam",
     just_once=True,
-    key="mic_recorder"
+    key="mic_recorder",
 )
 
+audio_bytes = _as_bytes(audio_obj)
+
 if audio_bytes:
+    # Tampilkan playback
     st.audio(audio_bytes, format="audio/wav")
     with st.spinner("Mengubah suara menjadi teks..."):
         try:
-            voice_text = speech_to_text(audio_bytes)
+            voice_text = speech_to_text(audio_bytes)  # fungsi kamu yang pakai HF Whisper
             st.success("✅ Transkripsi selesai!")
-            st.write(voice_text)
-
-            # Optional: konversi langsung ke SOAP
-            if st.button("🧠 Generate SOAP dari suara"):
-                raw = llm_to_soap(voice_text)
-                S, O, A, P, ok = parse_soap(raw)
-                st.success("Berhasil dibuat dari rekaman suara!")
-                st.write(f"Subjective: {S}\nObjective: {O}\nAssessment: {A}\nPlan: {P}")
+            # Isi textarea utama dengan hasil transkripsi agar bisa langsung Generate SOAP
+            text = st.text_area(
+                "Hasil transkripsi (boleh diedit sebelum Generate)",
+                value=voice_text,
+                height=160,
+            )
         except Exception as e:
             st.error(f"Gagal memproses audio: {e}")
 def speech_to_text(audio_bytes):
