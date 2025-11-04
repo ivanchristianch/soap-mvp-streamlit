@@ -111,29 +111,36 @@ def call_huggingface(raw_text: str) -> str:
               "Balas HANYA berupa JSON valid satu baris, tanpa komentar.")
     user = f'Map teks klinis berikut menjadi SOAP.\n\nTeks:\n""" {raw_text.strip()} """\n\nBalas HANYA JSON valid:'
 
-    url = f"https://api-inference.huggingface.co/v1/models/{HF_MODEL}"
+    # ✅ Endpoint BARU HF router (wajib)
+    url = f"https://router.huggingface.co/hf-inference/models/{HF_MODEL}"
     headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
+
     payload = {
         "inputs": f"{system}\n\n{user}",
         "parameters": {"max_new_tokens": 500, "temperature": 0.0, "return_full_text": False},
         "options": {"use_cache": True, "wait_for_model": True}
     }
+
+    # (opsional) tampilkan URL untuk debug cepat
+    st.caption(f"🔗 HF endpoint: {url}")
+
     r = requests.post(url, headers=headers, data=_json.dumps(payload), timeout=60)
     if r.status_code == 401:
         raise RuntimeError("HF 401 Unauthorized — token salah/expired. Periksa HF_TOKEN di Secrets, lalu Reboot app.")
     if r.status_code == 403:
         raise RuntimeError("HF 403 Forbidden — model butuh akses. Coba HF_MODEL = 'google/gemma-2-2b-it'.")
+    if r.status_code == 404:
+        raise RuntimeError("HF 404 Not Found — cek nama model (HF_MODEL) dan pastikan tidak ada spasi/typo.")
     if r.status_code >= 400:
         raise RuntimeError(f"HF error {r.status_code}: {r.text[:300]}")
 
     out = r.json()
-    # Ekstrak teks generasi
     if isinstance(out, list) and out and "generated_text" in out[0]:
         return out[0]["generated_text"]
     if isinstance(out, dict) and "generated_text" in out:
         return out["generated_text"]
-    # fallback: kirim apa adanya (nanti di-parse oleh extract_json_block)
     return _json.dumps(out)
+
 
 
 def llm_to_soap(raw_text: str) -> str:
