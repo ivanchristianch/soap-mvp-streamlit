@@ -91,35 +91,52 @@ def parse_soap(s: str):
 # ============== SPEECH → TEXT (HF Router) ==============
 def speech_to_text(audio_bytes: bytes) -> str:
     """
-    Speech → text using Hugging Face InferenceClient.
-    This avoids the 410/404 issues and auto-routes to the right backend.
+    Robust ASR via Hugging Face Inference API (bukan router).
+    - Menunggu cold start (wait_for_model=true)
+    - Mencoba beberapa model kecil berurutan
+    - Mengembalikan pesan error yang jelas jika gagal
     """
     if not HF_TOKEN:
         raise RuntimeError("HF_TOKEN belum diatur di Secrets.")
 
-    from huggingface_hub import InferenceClient
+    models_try = [
+        "distil-whisper/distil-small.en",  # cepat (bisa Indo campur Eng ok)
+        "openai/whisper-base",
+        "openai/whisper-small",
+    ]
 
-    # You can switch to another model if needed, e.g.:
-    #   "openai/whisper-base"
-    #   "distil-whisper/distil-small.en" (fast, English)
-    model_id = "openai/whisper-small"
+    headers = {
+        "Authorization": f"Bearer {HF_TOKEN}",
+        "Content-Type": "application/octet-stream",  # paling aman
+    }
 
-    client = InferenceClient(model=model_id, token=HF_TOKEN)
+    last_err = None
+    for mid in models_try:
+        url = f"https://api-inference.huggingface.co/models/{mid}?wait_for_model=true"
+        try:
+            r = requests.post(url, headers=headers, data=audio_bytes, timeout=120)
+            if r.status_code == 503:
+                # model lagi loading — tunggu & coba lagi (user bisa klik rekam lagi)
+                last_err = f"{mid} masih loading (503). Coba ulang 20–40 detik lagi."
+                continue
+            if r.status_code >= 400:
+                last_err = f"{mid} -> {r.status_code}: {r.text[:300]}"
+                continue
 
-    # Some models return a dict {"text": "..."}; others return a string.
-    try:
-        out = client.automatic_speech_recognition(audio=audio_bytes)
-    except Exception as e:
-        # Cold start / throttling messages are common; surface them clearly
-        raise RuntimeError(f"HF ASR call failed: {e}") from e
+            out = r.json()
+            if isinstance(out, dict) and "text" in out:
+                return out["text"]
+            if isinstance(out, list) and out and isinstance(out[0], dict) and "generated_text" in out[0]:
+                return out[0]["generated_text"]
 
-    if isinstance(out, dict) and "text" in out:
-        return out["text"]
-    if isinstance(out, str):
-        return out
+            # bentuk lain (fallback)
+            return str(out)
 
-    # Fallback for rare response shapes
-    return str(out)
+        except Exception as e:
+            last_err = f"{mid} exception: {e}"
+
+    raise RuntimeError(f"HF ASR gagal: {last_err or 'unknown error'}")
+
 
 def _as_bytes(a):
     """Normalisasi keluaran mic_recorder menjadi bytes (WAV)."""
