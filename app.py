@@ -111,7 +111,7 @@ def call_huggingface(raw_text: str) -> str:
               "Balas HANYA berupa JSON valid satu baris, tanpa komentar.")
     user = f'Map teks klinis berikut menjadi SOAP.\n\nTeks:\n""" {raw_text.strip()} """\n\nBalas HANYA JSON valid:'
 
-    url = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
+    url = f"https://router.huggingface.co/hf-inference/models/{HF_MODEL}"
     headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
     payload = {
         "inputs": f"{system}\n\n{user}",
