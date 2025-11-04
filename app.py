@@ -2,7 +2,17 @@ import json, io, os, re
 from datetime import datetime
 import streamlit as st
 from fpdf import FPDF
-
+import requests
+def speech_to_text(audio_bytes):
+    """Ubah suara (WAV/MP3) jadi teks pakai model whisper kecil di Hugging Face"""
+    url = "https://router.huggingface.co/v1/audio/transcriptions"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
+    files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
+    data = {"model": "openai/whisper-small"}
+    r = requests.post(url, headers=headers, files=files, data=data)
+    r.raise_for_status()
+    out = r.json()
+    return out.get("text", "")
 # ====== Parser JSON yang kuat ======
 def extract_json_block(text: str) -> str | None:
     """Ambil blok JSON { ... } pertama yang valid dari teks mentah."""
