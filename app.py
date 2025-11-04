@@ -3,6 +3,55 @@ from datetime import datetime
 import streamlit as st
 from fpdf import FPDF
 
+import re  # tambahkan ini
+
+# ===== PATCH 1: parser JSON =====
+def extract_json_block(text: str) -> str | None:
+    """Ambil blok JSON { ... } pertama yang valid dari teks mentah."""
+    if not isinstance(text, str):
+        return None
+    txt = text.strip()
+    # buang code fence ```json ... ```
+    txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", txt, flags=re.IGNORECASE)
+
+    # coba parse langsung
+    try:
+        json.loads(txt)
+        return txt
+    except Exception:
+        pass
+
+    # cari kurung kurawal terluar
+    start = txt.find("{")
+    end   = txt.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        candidate = txt[start:end+1]
+        # perbaikan ringan: kutip tunggal -> ganda jika perlu
+        if "'" in candidate and '"Subjective"' not in candidate:
+            cand2 = candidate.replace("'", '"')
+            try:
+                json.loads(cand2); return cand2
+            except Exception:
+                pass
+        try:
+            json.loads(candidate); return candidate
+        except Exception:
+            return None
+    return None
+
+def parse_soap(s: str):
+    """Parse JSON hasil model; jika gagal, fallback tetap bisa dipitch."""
+    block = extract_json_block(s)
+    if block:
+        try:
+            d = json.loads(block)
+            return d.get("Subjective",""), d.get("Objective",""), d.get("Assessment",""), d.get("Plan",""), True
+        except Exception:
+            pass
+    # fallback: taruh semua ke Subjective agar user tetap bisa edit
+    return str(s), "", "", "", False
+
+
 st.set_page_config(page_title="SOAP Notation MVP", page_icon="🩺", layout="centered")
 st.title("🩺 SOAP Notation MVP")
 st.caption("Text → SOAP (S/O/A/P) → PDF — bisa jalan GRATIS via Hugging Face")
@@ -11,7 +60,7 @@ st.caption("Text → SOAP (S/O/A/P) → PDF — bisa jalan GRATIS via Hugging Fa
 OPENAI_API_KEY = st.secrets.get("OPENAI_API_KEY", "")
 HF_TOKEN = st.secrets.get("HF_TOKEN", "")  # token gratis dari huggingface.co
 OPENAI_MODEL = st.secrets.get("OPENAI_MODEL", "gpt-4o-mini")
-HF_MODEL = st.secrets.get("HF_MODEL", "mistralai/Mistral-7B-Instruct-v0.2")  # cepat & stabil utk demo
+HF_MODEL = st.secrets.get("HF_MODEL", "google/gemma-2-2b-it")  # cepat & stabil utk demo
 
 # indikator kunci yang terbaca (masked)
 if OPENAI_API_KEY:
@@ -55,33 +104,37 @@ def call_openai(raw_text: str) -> str:
     return resp.choices[0].message.content.strip()
 
 def call_huggingface(raw_text: str) -> str:
-    # Pakai InferenceClient (gratis dengan token HF)
-    from huggingface_hub import InferenceClient
-    client = InferenceClient(model=HF_MODEL, token=HF_TOKEN)
-
-    # Prompt instruksi agar output JSON valid
+    import requests, json as _json
     system = ("Kamu asisten dokumentasi medis. Kembalikan hasil HANYA JSON valid "
               "dengan keys: Subjective, Objective, Assessment, Plan. "
-              "Ringkas, klinis, dan jangan menambah data fiktif.")
-    user = f'Map teks klinis berikut menjadi SOAP. Balas HANYA JSON valid.\n\nTeks:\n""" {raw_text.strip()} """'
+              "Ringkas, klinis, dan jangan menambah data fiktif. "
+              "Balas HANYA berupa JSON valid satu baris, tanpa komentar.")
+    user = f'Map teks klinis berikut menjadi SOAP.\n\nTeks:\n""" {raw_text.strip()} """\n\nBalas HANYA JSON valid:'
 
-    # Beberapa model mendukung chat; kalau tidak, gunakan text_generation
-    try:
-        out = client.chat_completion(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            max_tokens=600,
-            temperature=0.0,
-        )
-        # InferenceClient.chat_completion mengembalikan dict {choices:[{message:{content}}]}
-        return out.choices[0].message["content"]
-    except Exception:
-        # Fallback ke text_generation
-        prompt = f"{system}\n\n{user}\n\nJawab hanya JSON valid:"
-        text = client.text_generation(prompt, max_new_tokens=600, do_sample=False, temperature=0.0)
-        return text
+    url = f"https://api-inference.huggingface.co/models/{HF_MODEL}"
+    headers = {"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"}
+    payload = {
+        "inputs": f"{system}\n\n{user}",
+        "parameters": {"max_new_tokens": 500, "temperature": 0.0, "return_full_text": False},
+        "options": {"use_cache": True, "wait_for_model": True}
+    }
+    r = requests.post(url, headers=headers, data=_json.dumps(payload), timeout=60)
+    if r.status_code == 401:
+        raise RuntimeError("HF 401 Unauthorized — token salah/expired. Periksa HF_TOKEN di Secrets, lalu Reboot app.")
+    if r.status_code == 403:
+        raise RuntimeError("HF 403 Forbidden — model butuh akses. Coba HF_MODEL = 'google/gemma-2-2b-it'.")
+    if r.status_code >= 400:
+        raise RuntimeError(f"HF error {r.status_code}: {r.text[:300]}")
+
+    out = r.json()
+    # Ekstrak teks generasi
+    if isinstance(out, list) and out and "generated_text" in out[0]:
+        return out[0]["generated_text"]
+    if isinstance(out, dict) and "generated_text" in out:
+        return out["generated_text"]
+    # fallback: kirim apa adanya (nanti di-parse oleh extract_json_block)
+    return _json.dumps(out)
+
 
 def llm_to_soap(raw_text: str) -> str:
     if OPENAI_API_KEY:
@@ -96,14 +149,27 @@ def parse_soap(s: str):
         return s, "", "", "", False  # tetap bisa dipitch
 
 def build_pdf(patient, date_str, S, O, A, P) -> bytes:
-    pdf = FPDF(); pdf.add_page(); pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.set_font("Arial", "B", 16); pdf.cell(0, 10, "SOAP Note (MVP)", ln=1)
-    pdf.set_font("Arial", "", 12); pdf.cell(0, 8, f"Patient: {patient or '-'}   |   Date: {date_str or '-'}", ln=1); pdf.ln(2)
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_auto_page_break(auto=True, margin=15)
+
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "SOAP Note (MVP)", ln=1)
+
+    pdf.set_font("Arial", "", 12)
+    header = f"Patient: {patient or '-'}   |   Date: {date_str or '-'}"
+    pdf.cell(0, 8, header, ln=1)
+    pdf.ln(2)
+
     def sec(title, content):
         pdf.set_font("Arial", "B", 13); pdf.cell(0, 8, title, ln=1)
         pdf.set_font("Arial", "", 12); pdf.multi_cell(0, 7, (content or "-").strip()); pdf.ln(2)
+
     sec("Subjective", S); sec("Objective", O); sec("Assessment", A); sec("Plan", P)
-    buf = io.BytesIO(); pdf.output(buf); return buf.getvalue()
+
+    # KUNCI: kembalikan bytes via dest='S'
+    return pdf.output(dest="S").encode("latin-1")
+
 
 # ===== Run =====
 if submitted:
