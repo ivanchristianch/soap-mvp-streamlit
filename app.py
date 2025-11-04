@@ -91,40 +91,34 @@ def parse_soap(s: str):
 # ============== SPEECH → TEXT (HF Router) ==============
 def speech_to_text(audio_bytes: bytes) -> str:
     """
-    Ubah audio (WAV/MP3) jadi teks via Hugging Face Inference API (bukan router).
-    Works with: openai/whisper-small, openai/whisper-base, distil-whisper/distil-small.en, dll.
+    Speech → text using Hugging Face InferenceClient.
+    This avoids the 410/404 issues and auto-routes to the right backend.
     """
     if not HF_TOKEN:
         raise RuntimeError("HF_TOKEN belum diatur di Secrets.")
 
-    # Gunakan Inference API, bukan router:
-    model_id = "openai/whisper-small"   # boleh diganti
-    url = f"https://api-inference.huggingface.co/models/{model_id}"
+    from huggingface_hub import InferenceClient
 
-    headers = {
-        "Authorization": f"Bearer {HF_TOKEN}",
-        "Content-Type": "audio/wav",  # streamlit-mic-recorder menghasilkan WAV PCM
-    }
+    # You can switch to another model if needed, e.g.:
+    #   "openai/whisper-base"
+    #   "distil-whisper/distil-small.en" (fast, English)
+    model_id = "openai/whisper-small"
 
-    r = requests.post(url, headers=headers, data=audio_bytes, timeout=120)
+    client = InferenceClient(model=model_id, token=HF_TOKEN)
 
-    # 503 = model sedang cold start/loading
-    if r.status_code == 503:
-        raise RuntimeError("Model ASR sedang loading (503). Tunggu 20–40 detik lalu coba lagi.")
+    # Some models return a dict {"text": "..."}; others return a string.
+    try:
+        out = client.automatic_speech_recognition(audio=audio_bytes)
+    except Exception as e:
+        # Cold start / throttling messages are common; surface them clearly
+        raise RuntimeError(f"HF ASR call failed: {e}") from e
 
-    if r.status_code >= 400:
-        raise RuntimeError(f"HF ASR error {r.status_code}: {r.text[:300]}")
-
-    out = r.json()
-    # Whisper biasanya mengembalikan {'text': '...'}
     if isinstance(out, dict) and "text" in out:
         return out["text"]
+    if isinstance(out, str):
+        return out
 
-    # Beberapa model mengembalikan list [{'generated_text': '...'}]
-    if isinstance(out, list) and out and isinstance(out[0], dict) and "generated_text" in out[0]:
-        return out[0]["generated_text"]
-
-    # fallback
+    # Fallback for rare response shapes
     return str(out)
 
 def _as_bytes(a):
