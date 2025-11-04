@@ -92,10 +92,16 @@ with st.form("soap_form"):
 def call_openai(raw_text: str) -> str:
     from openai import OpenAI
     client = OpenAI(api_key=OPENAI_API_KEY)
-    system = ("Kamu asisten dokumentasi medis. Kembalikan hasil HANYA JSON valid "
-              "dengan keys persis: Subjective, Objective, Assessment, Plan. "
-              "Ringkas & klinis, jangan menambah data fiktif.")
-    user = f'Map teks klinis berikut menjadi SOAP. Balas HANYA JSON valid.\n\nTeks:\n""" {raw_text.strip()} """'
+    system = (
+    "Kamu asisten dokumentasi medis. Kembalikan hasil HANYA JSON valid "
+    "dengan keys persis: Subjective, Objective, Assessment, Plan. "
+    "Tidak boleh ada teks lain di luar JSON; TIDAK BOLEH pakai ``` atau penjelasan. "
+    "Balas dalam SATU baris JSON, tanpa komentar, tanpa trailing comma."
+)
+    user = (
+    f"Teks klinis:\n\"\"\"{raw_text.strip()}\"\"\"\n"
+    "Ubah menjadi JSON valid (SATU BARIS) dengan keys: Subjective, Objective, Assessment, Plan."
+) """'
     resp = client.chat.completions.create(
         model=OPENAI_MODEL,
         temperature=0,
@@ -105,11 +111,16 @@ def call_openai(raw_text: str) -> str:
 
 def call_huggingface(raw_text: str) -> str:
     import requests, json as _json
-    system = ("Kamu asisten dokumentasi medis. Kembalikan hasil HANYA JSON valid "
-              "dengan keys: Subjective, Objective, Assessment, Plan. "
-              "Ringkas, klinis, dan jangan menambah data fiktif. "
-              "Balas HANYA berupa JSON valid satu baris, tanpa komentar.")
-    user = f'Map teks klinis berikut menjadi SOAP.\n\nTeks:\n""" {raw_text.strip()} """\n\nBalas HANYA JSON valid:'
+    system = (
+    "Kamu asisten dokumentasi medis. Kembalikan hasil HANYA JSON valid "
+    "dengan keys persis: Subjective, Objective, Assessment, Plan. "
+    "Tidak boleh ada teks lain di luar JSON; TIDAK BOLEH pakai ``` atau penjelasan. "
+    "Balas dalam SATU baris JSON, tanpa komentar, tanpa trailing comma."
+)
+    user = (
+    f"Teks klinis:\n\"\"\"{raw_text.strip()}\"\"\"\n"
+    "Ubah menjadi JSON valid (SATU BARIS) dengan keys: Subjective, Objective, Assessment, Plan."
+)'
 
     # ✅ Router HF - OpenAI-compatible endpoint
     url = "https://router.huggingface.co/v1/chat/completions"
