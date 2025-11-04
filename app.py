@@ -8,13 +8,18 @@ st.set_page_config(page_title="SOAP Notation MVP", page_icon="🩺", layout="cen
 st.title("🩺 SOAP Notation MVP")
 st.caption("Text → SOAP (S/O/A/P) → PDF — ringan untuk pitching")
 
-# --- OpenAI client (pakai Secrets di Streamlit Cloud) ---
+# --- OpenAI client & debug indicator ---
 api_key = st.secrets.get("OPENAI_API_KEY", "")
+if not api_key:
+    # fallback ke env var kalau ada (jaga-jaga)
+    import os
+    api_key = os.getenv("OPENAI_API_KEY", "")
+
 if not api_key:
     st.error("OPENAI_API_KEY belum diset di Settings → Secrets (Streamlit Cloud).")
     st.stop()
 
-# tampilkan indikator aman (masked)
+# tampilkan indikator (masked) supaya kita tahu secret kebaca
 st.caption(f"🔑 OpenAI key loaded: sk-****{api_key[-6:]}")
 
 from openai import OpenAI
