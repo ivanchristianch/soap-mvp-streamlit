@@ -3,3 +3,7 @@ openai>=1.51.0
 fpdf
 huggingface-hub>=0.24.0
 requests
+streamlit-mic-recorder
+ffmpeg-python
+pydub
+requests
