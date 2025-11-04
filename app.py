@@ -90,17 +90,42 @@ def parse_soap(s: str):
 
 # ============== SPEECH → TEXT (HF Router) ==============
 def speech_to_text(audio_bytes: bytes) -> str:
-    """Ubah audio (WAV/MP3) menjadi teks via Hugging Face Router (Whisper)."""
+    """
+    Ubah audio (WAV/MP3) jadi teks via Hugging Face Inference API (bukan router).
+    Works with: openai/whisper-small, openai/whisper-base, distil-whisper/distil-small.en, dll.
+    """
     if not HF_TOKEN:
         raise RuntimeError("HF_TOKEN belum diatur di Secrets.")
-    url = "https://router.huggingface.co/v1/audio/transcriptions"
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
-    data = {"model": ASR_MODEL}
-    r = requests.post(url, headers=headers, files=files, data=data, timeout=60)
+
+    # Gunakan Inference API, bukan router:
+    model_id = "openai/whisper-small"   # boleh diganti
+    url = f"https://api-inference.huggingface.co/models/{model_id}"
+
+    headers = {
+        "Authorization": f"Bearer {HF_TOKEN}",
+        "Content-Type": "audio/wav",  # streamlit-mic-recorder menghasilkan WAV PCM
+    }
+
+    r = requests.post(url, headers=headers, data=audio_bytes, timeout=120)
+
+    # 503 = model sedang cold start/loading
+    if r.status_code == 503:
+        raise RuntimeError("Model ASR sedang loading (503). Tunggu 20–40 detik lalu coba lagi.")
+
     if r.status_code >= 400:
         raise RuntimeError(f"HF ASR error {r.status_code}: {r.text[:300]}")
-    return r.json().get("text", "")
+
+    out = r.json()
+    # Whisper biasanya mengembalikan {'text': '...'}
+    if isinstance(out, dict) and "text" in out:
+        return out["text"]
+
+    # Beberapa model mengembalikan list [{'generated_text': '...'}]
+    if isinstance(out, list) and out and isinstance(out[0], dict) and "generated_text" in out[0]:
+        return out[0]["generated_text"]
+
+    # fallback
+    return str(out)
 
 def _as_bytes(a):
     """Normalisasi keluaran mic_recorder menjadi bytes (WAV)."""
