@@ -3,16 +3,19 @@ from datetime import datetime
 import streamlit as st
 from fpdf import FPDF
 
-import re  # tambahkan ini
-
-# ===== PATCH 1: parser JSON =====
-def extract_json_block(text: str) -> str | None:
-    """Ambil blok JSON { ... } pertama yang valid dari teks mentah."""
+import re  def extract_json_block(text: str) -> str | None:
+    """Ambil blok JSON { ... } pertama yang valid.
+    - Menghapus semua code fence ```json / ```
+    - Melakukan scan kurung kurawal seimbang
+    - Mencoba konversi kutip tunggal -> ganda jika perlu
+    """
     if not isinstance(text, str):
         return None
     txt = text.strip()
-    # buang code fence ```json ... ```
-    txt = re.sub(r"^```(?:json)?\s*|\s*```$", "", txt, flags=re.IGNORECASE)
+
+    # hapus semua code fences di mana pun posisinya
+    txt = re.sub(r"```(?:json)?", "", txt, flags=re.IGNORECASE)
+    txt = txt.replace("```", "").strip()
 
     # coba parse langsung
     try:
@@ -21,36 +24,51 @@ def extract_json_block(text: str) -> str | None:
     except Exception:
         pass
 
-    # cari kurung kurawal terluar
+    # scan kurung kurawal seimbang dari { pertama
     start = txt.find("{")
-    end   = txt.rfind("}")
-    if start != -1 and end != -1 and end > start:
-        candidate = txt[start:end+1]
-        # perbaikan ringan: kutip tunggal -> ganda jika perlu
-        if "'" in candidate and '"Subjective"' not in candidate:
-            cand2 = candidate.replace("'", '"')
-            try:
-                json.loads(cand2); return cand2
-            except Exception:
-                pass
+    if start == -1:
+        return None
+    depth = 0
+    end_idx = None
+    for i, ch in enumerate(txt[start:], start):
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end_idx = i
+                break
+    if end_idx is None:
+        return None
+
+    candidate = txt[start:end_idx + 1]
+
+    # coba parse apa adanya, lalu versi kutip tunggal -> ganda
+    for cand in (candidate, candidate.replace("'", '"')):
         try:
-            json.loads(candidate); return candidate
+            json.loads(cand)
+            return cand
         except Exception:
-            return None
+            continue
     return None
 
 def parse_soap(s: str):
-    """Parse JSON hasil model; jika gagal, fallback tetap bisa dipitch."""
+    """Parse JSON hasil model; fallback tetap bisa dipitch."""
     block = extract_json_block(s)
     if block:
         try:
             d = json.loads(block)
-            return d.get("Subjective",""), d.get("Objective",""), d.get("Assessment",""), d.get("Plan",""), True
+            return (
+                d.get("Subjective", ""),
+                d.get("Objective", ""),
+                d.get("Assessment", ""),
+                d.get("Plan", ""),
+                True,
+            )
         except Exception:
             pass
-    # fallback: taruh semua ke Subjective agar user tetap bisa edit
+    # fallback: tampilkan raw agar bisa diedit manual
     return str(s), "", "", "", False
-
 
 st.set_page_config(page_title="SOAP Notation MVP", page_icon="🩺", layout="centered")
 st.title("🩺 SOAP Notation MVP")
