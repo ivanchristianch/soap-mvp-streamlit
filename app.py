@@ -8,27 +8,37 @@ from streamlit_mic_recorder import mic_recorder
 # ============================================================
 #                FIXED SPEECH RECOGNITION (WORKING)
 # ============================================================
-def speech_to_text(audio_bytes):
-    """
-    Konversi suara → teks pakai model Whisper (via HF Inference API)
-    Endpoint stabil & gratis.
-    """
-    HF_ASR_MODEL = "openai/whisper-base"
-    url = f"https://router.huggingface.co/hf-inference/models/{model_id}"
+ASR_MODEL = "openai/whisper-base"  # bisa ganti: "openai/whisper-small" / "distil-whisper/distil-small.en"
 
-    headers = {"Authorization": f"Bearer {HF_TOKEN}"}
-    files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
+def speech_to_text(audio_bytes: bytes) -> str:
+    """
+    Speech → text via HF NEW router:
+    https://router.huggingface.co/hf-inference/models/{model}
+    """
+    if not HF_TOKEN:
+        raise RuntimeError("HF_TOKEN belum diatur di Secrets.")
 
-    r = requests.post(url, headers=headers, files=files, timeout=60)
+    url = f"https://router.huggingface.co/hf-inference/models/{ASR_MODEL}"
+    headers = {
+        "Authorization": f"Bearer {HF_TOKEN}",
+        "Content-Type": "application/octet-stream",
+        "Accept": "application/json",
+    }
+    params = {"wait_for_model": "true"}  # tunggu cold start (tier gratis)
+
+    r = requests.post(url, headers=headers, params=params, data=audio_bytes, timeout=180)
 
     if r.status_code == 503:
-        return "Model sedang loading, tunggu 10 detik dan coba lagi."
-
+        raise RuntimeError("Model ASR sedang loading (503). Coba lagi 20–40 detik.")
     if r.status_code >= 400:
-        raise RuntimeError(f"HF ASR Error {r.status_code}: {r.text}")
+        raise RuntimeError(f"HF ASR Error {r.status_code}: {r.text[:400]}")
 
     out = r.json()
-    return out.get("text", "").strip()
+    if isinstance(out, dict) and "text" in out:
+        return out["text"].strip()
+    if isinstance(out, list) and out and isinstance(out[0], dict) and "generated_text" in out[0]:
+        return out[0]["generated_text"].strip()
+    return str(out)
 
 
 # ============================================================
