@@ -14,7 +14,7 @@ def speech_to_text(audio_bytes):
     Endpoint stabil & gratis.
     """
     HF_ASR_MODEL = "openai/whisper-base"
-    url = f"https://api-inference.huggingface.co/models/{HF_ASR_MODEL}"
+    url = f"https://router.huggingface.co/hf-inference/models/{model_id}"
 
     headers = {"Authorization": f"Bearer {HF_TOKEN}"}
     files = {"file": ("audio.wav", audio_bytes, "audio/wav")}
