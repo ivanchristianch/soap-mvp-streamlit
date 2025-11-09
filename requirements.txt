@@ -11,3 +11,8 @@ huggingface_hub>=0.25.0
 streamlit-mic-recorder
 requests
 fpdf
+streamlit
+streamlit-mic-recorder
+huggingface_hub>=0.26.0
+requests
+fpdf
