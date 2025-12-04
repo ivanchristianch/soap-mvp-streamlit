@@ -8,29 +8,19 @@ from streamlit_mic_recorder import mic_recorder
 # ============================================================
 #                 OPENAI SPEECH-TO-TEXT (STABLE)
 # ============================================================
+from openai import OpenAI
+client = OpenAI(api_key=OPENAI_API_KEY)
+
 def speech_to_text_openai(audio_bytes):
-    """
-    Convert audio → text via OpenAI Whisper (very stable).
-    """
-    api_key = OPENAI_API_KEY
-    url = "https://api.openai.com/v1/audio/transcriptions"
+    try:
+        result = client.audio.transcriptions.create(
+            model="gpt-4o-transcribe-1",
+            file=("audio.wav", audio_bytes, "audio/wav")
+        )
+        return result.text.strip()
+    except Exception as e:
+        raise RuntimeError(f"Gagal transkripsi OpenAI: {e}")
 
-    files = {
-        "file": ("audio.wav", audio_bytes, "audio/wav"),
-        "model": (None, "gpt-4o-transcribe"),
-    }
-
-    headers = {
-        "Authorization": f"Bearer {api_key}"
-    }
-
-    r = requests.post(url, headers=headers, files=files)
-
-    if r.status_code != 200:
-        raise RuntimeError(f"OpenAI ASR Error {r.status_code}: {r.text}")
-
-    data = r.json()
-    return data.get("text", "").strip()
 
 
 # ============================================================
