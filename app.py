@@ -16,13 +16,13 @@ if not OPENAI_API_KEY:
     st.stop()
 
 # ============================================================
-#              INIT OPENAI CLIENT
+#              INIT OPENAI CLIENT (SETELAH SECRETS)
 # ============================================================
 from openai import OpenAI
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ============================================================
-#               OPENAI SPEECH TO TEXT
+#               OPENAI SPEECH TO TEXT (STABIL)
 # ============================================================
 def speech_to_text_openai(audio_bytes):
     try:
@@ -36,7 +36,7 @@ def speech_to_text_openai(audio_bytes):
 
 
 # ============================================================
-#           Normalisasi output mic_recorder → bytes
+#        Normalisasi output mic_recorder → bytes
 # ============================================================
 def _as_bytes(a):
     if a is None:
@@ -51,7 +51,7 @@ def _as_bytes(a):
 
 
 # ============================================================
-#              JSON Extractor (HF Output)
+#      JSON Extractor untuk output SOAP dari HF
 # ============================================================
 def extract_json_block(text: str):
     if not isinstance(text, str):
@@ -85,7 +85,7 @@ def extract_json_block(text: str):
     if end is None:
         return None
 
-    candidate = txt[start:end+1]
+    candidate = txt[start:end + 1]
 
     for cand in (candidate, candidate.replace("'", '"')):
         try:
@@ -107,49 +107,22 @@ def parse_soap(s: str):
                 d.get("Objective", ""),
                 d.get("Assessment", ""),
                 d.get("Plan", ""),
-                d.get("ICD10", ""),
-                d.get("Severity", ""),
-                d.get("Alert", ""),
                 True
             )
         except:
             pass
-
-    return s, "", "", "", "", "", "", False
-
-
-# ============================================================
-#               ICD-10 Dictionary + Lookup
-# ============================================================
-ICD10_MAP = {
-    "appendicitis": "K35.80",
-    "acute appendicitis": "K35.80",
-    "pneumonia": "J18.9",
-    "gastroenteritis": "A09",
-    "uti": "N39.0",
-    "urinary tract infection": "N39.0",
-    "dengue": "A90",
-    "dengue fever": "A90",
-    "covid": "U07.1",
-    "influenza": "J11.1"
-}
-
-def get_icd10(dx: str):
-    dx = dx.lower()
-    for key, code in ICD10_MAP.items():
-        if key in dx:
-            return code
-    return "ICD-10 tidak tersedia"
+    return s, "", "", "", False
 
 
 # ============================================================
-#                          UI
+#                        UI
 # ============================================================
 st.set_page_config(page_title="SOAP MVP", page_icon="🩺")
 
-st.title("🩺 SOAP Notation PRO")
-st.caption("🎤 Voice → Text → Diagnosis → ICD10 → Guideline Plan → PDF")
+st.title("🩺 SOAP Notation MVP")
+st.caption("🎤 Voice → Text → SOAP → Diagnosis → PDF")
 
+# init session state
 if "clinical_text" not in st.session_state:
     st.session_state["clinical_text"] = "Masukkan keluhan pasien di sini..."
 
@@ -170,6 +143,7 @@ audio_bytes = _as_bytes(audio_obj)
 
 if audio_bytes:
     st.audio(audio_bytes, format="audio/wav")
+
     with st.spinner("Mengubah suara menjadi teks (OpenAI)…"):
         try:
             voice_text = speech_to_text_openai(audio_bytes)
@@ -178,9 +152,8 @@ if audio_bytes:
         except Exception as e:
             st.error(f"Gagal transkripsi: {e}")
 
-
 # ============================================================
-#                  INPUT TEKS KLINIS
+#                 INPUT TEKS KLINIS
 # ============================================================
 st.subheader("📝 Input teks klinis")
 
@@ -192,14 +165,13 @@ text = st.text_area(
 
 
 # ============================================================
-#                     GENERATE SOAP
+#                 GENERATE SOAP
 # ============================================================
 if st.button("🧠 Generate SOAP"):
 
     text = st.session_state["clinical_text"]
 
     with st.spinner("Mengubah teks → SOAP + DIAGNOSIS…"):
-
         url = "https://router.huggingface.co/v1/chat/completions"
 
         headers = {
@@ -207,23 +179,24 @@ if st.button("🧠 Generate SOAP"):
             "Content-Type": "application/json"
         }
 
+        # =====================================================
+        #             SYSTEM MESSAGE SUPER INTELLIGENT
+        # =====================================================
         system_prompt = """
 Kamu adalah asisten medis ahli.
 
-Tugasmu membuat SOAP NOTE dalam format JSON:
-{ "Subjective": "", "Objective": "", "Assessment": "", "Plan": "", "ICD10": "", "Severity": "", "Alert": "" }
+Tugasmu membuat SOAP NOTE dalam format JSON (Subjective, Objective, Assessment, Plan).
 
 RULES:
-- Assessment = diagnosis utama, singkat, contoh: "Appendicitis acuta".
-- Severity = Mild / Moderate / Severe.
-- Alert = red flag klinis (contoh: "🚨 Peritonitis suspected").
-- ICD10 harus sesuai diagnosis.
-- Plan mengikuti guideline:
-    - Appendicitis → NPO, IV fluids, analgesik, Ceftriaxone + Metronidazole, operasi.
-    - Gastroenteritis → ORS, rehidrasi, zinc (anak), diet.
-    - Pneumonia → antibiotik (amoxicillin/ceftriaxone), antipiretik.
-    - Dengue → monitoring HCT, cairan rumatan, edukasi warning sign.
-    - UTI → antibiotik empiris, hidrasi.
+- Subjective = riwayat keluhan pasien.
+- Objective = temuan pemeriksaan fisik/lab jika ada.
+- Assessment = DIAGNOSIS UTAMA berdasarkan data pasien.
+    • Jika diagnosis jelas: tulis diagnosis definitif (contoh: Appendicitis acuta).
+    • Jika masih DD: pilih diagnosis PALING MUNGKIN.
+    • Jangan masukkan detail pemeriksaan ke Assessment.
+    • Jangan pakai <br>, bullet, list panjang. Hanya diagnosis singkat.
+- Plan = rencana terapi / pemeriksaan yang sesuai dengan diagnosis.
+
 Output HANYA JSON valid.
 """
 
@@ -239,46 +212,34 @@ Output HANYA JSON valid.
         r = requests.post(url, headers=headers, json=payload)
         raw = r.json()["choices"][0]["message"]["content"]
 
-    S, O, A, P, ICD_FROM_MODEL, Severity, Alert, ok = parse_soap(raw)
+    S, O, A, P, ok = parse_soap(raw)
 
     st.success("SOAP berhasil dibuat!")
 
-    # ICD fallback (AI boleh salah)
-    icd_final = ICD_FROM_MODEL if ICD_FROM_MODEL else get_icd10(A)
-
     # ============================================================
-    #                  TAMPILKAN SOAP
+    #                 Tampilkan SOAP
     # ============================================================
-    st.subheader("📄 Hasil SOAP")
-
     col1, col2 = st.columns(2)
     with col1:
         S = st.text_area("🟡 Subjective", S)
-        A = st.text_area("🟣 Assessment (Diagnosis)", A)
-        Severity = st.text_area("🔥 Severity", Severity)
+        A = st.text_area("🟣 Assessment (DIAGNOSIS)", A)
     with col2:
         O = st.text_area("🔵 Objective", O)
-        P = st.text_area("🟢 Plan (Guideline-based)", P)
-        Alert = st.text_area("🚨 Alert (Red Flags)", Alert)
+        P = st.text_area("🟢 Plan", P)
 
-    st.write(f"### 🧬 ICD-10 Code: **{icd_final}**")
     st.divider()
 
     # ============================================================
-    #                        PDF BUILDER
+    #                      PDF BUILDER
     # ============================================================
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
     pdf.cell(0, 10, "SOAP Note", ln=1)
-
     pdf.set_font("Arial", "", 12)
     pdf.multi_cell(0, 8, f"Subjective:\n{S}")
     pdf.multi_cell(0, 8, f"\nObjective:\n{O}")
     pdf.multi_cell(0, 8, f"\nAssessment (Diagnosis):\n{A}")
-    pdf.multi_cell(0, 8, f"ICD-10: {icd_final}")
-    pdf.multi_cell(0, 8, f"\nSeverity:\n{Severity}")
-    pdf.multi_cell(0, 8, f"\nAlert:\n{Alert}")
     pdf.multi_cell(0, 8, f"\nPlan:\n{P}")
 
     pdf_bytes = pdf.output(dest="S").encode("latin-1")
