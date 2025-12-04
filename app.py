@@ -1,20 +1,11 @@
-import json, io, os, re
-from datetime import datetime
+import json, re
 import streamlit as st
-from fpdf import FPDF
 import requests
+from fpdf import FPDF
 from streamlit_mic_recorder import mic_recorder
 
 # ============================================================
-#                   STREAMLIT CONFIG
-# ============================================================
-st.set_page_config(page_title="SOAP MVP", page_icon="🩺")
-
-st.title("🩺 SOAP Notation MVP")
-st.caption("🎤 Voice → Text → SOAP → PDF (OpenAI + HuggingFace)")
-
-# ============================================================
-#                   LOAD SECRETS
+#                   LOAD SECRETS (WAJIB)
 # ============================================================
 HF_TOKEN = st.secrets.get("HF_TOKEN", "")
 HF_MODEL = st.secrets.get("HF_MODEL", "google/gemma-2-2b-it")
@@ -25,13 +16,13 @@ if not OPENAI_API_KEY:
     st.stop()
 
 # ============================================================
-#                   INIT OPENAI CLIENT (FIXED)
+#              INIT OPENAI CLIENT (SETELAH SECRETS)
 # ============================================================
 from openai import OpenAI
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ============================================================
-#               OPENAI SPEECH-TO-TEXT (FIXED)
+#               OPENAI SPEECH TO TEXT (FIXED)
 # ============================================================
 def speech_to_text_openai(audio_bytes):
     try:
@@ -44,7 +35,7 @@ def speech_to_text_openai(audio_bytes):
         raise RuntimeError(f"Gagal transkripsi OpenAI: {e}")
 
 # ============================================================
-#         NORMALISASI OUTPUT mic_recorder → bytes
+#       Normalisasi output mic_recorder → bytes
 # ============================================================
 def _as_bytes(a):
     if a is None:
@@ -58,15 +49,14 @@ def _as_bytes(a):
     return None
 
 # ============================================================
-#        JSON Extractor (agar output SOAP selalu valid)
+#      JSON Extractor untuk output SOAP dari HF
 # ============================================================
-def extract_json_block(text: str) -> str | None:
+def extract_json_block(text: str):
     if not isinstance(text, str):
         return None
-    txt = text.strip()
 
-    txt = re.sub(r"```(?:json)?", "", txt)
-    txt = txt.replace("```", "").strip()
+    txt = text.strip()
+    txt = re.sub(r"```(?:json)?", "", txt).replace("```", "").strip()
 
     try:
         json.loads(txt)
@@ -79,7 +69,7 @@ def extract_json_block(text: str) -> str | None:
         return None
 
     depth = 0
-    end_idx = None
+    end = None
 
     for i, ch in enumerate(txt[start:], start):
         if ch == "{":
@@ -87,13 +77,13 @@ def extract_json_block(text: str) -> str | None:
         elif ch == "}":
             depth -= 1
             if depth == 0:
-                end_idx = i
+                end = i
                 break
 
-    if not end_idx:
+    if end is None:
         return None
 
-    candidate = txt[start:end_idx+1]
+    candidate = txt[start:end+1]
 
     for cand in (candidate, candidate.replace("'", '"')):
         try:
@@ -103,6 +93,7 @@ def extract_json_block(text: str) -> str | None:
             pass
 
     return None
+
 
 def parse_soap(s: str):
     block = extract_json_block(s)
@@ -114,15 +105,20 @@ def parse_soap(s: str):
                 d.get("Objective", ""),
                 d.get("Assessment", ""),
                 d.get("Plan", ""),
-                True,
+                True
             )
         except:
             pass
-    return str(s), "", "", "", False
+    return s, "", "", "", False
 
 # ============================================================
-#             🎤 VOICE RECORDING
+#                        UI
 # ============================================================
+st.set_page_config(page_title="SOAP MVP", page_icon="🩺")
+
+st.title("🩺 SOAP Notation MVP")
+st.caption("🎤 Voice → Text → SOAP → PDF (OpenAI + HuggingFace)")
+
 st.subheader("🎙 Rekam anamnesis pasien")
 
 audio_obj = mic_recorder(
@@ -130,7 +126,7 @@ audio_obj = mic_recorder(
     stop_prompt="⏹ Stop",
     format="wav",
     just_once=True,
-    key="mic1",
+    key="mic1"
 )
 
 audio_bytes = _as_bytes(audio_obj)
@@ -145,3 +141,77 @@ if audio_bytes:
             st.success("✔ Transkripsi selesai!")
         except Exception as e:
             st.error(f"Gagal transkripsi: {e}")
+
+# ============================================================
+#                 INPUT TEKS KLINIS
+# ============================================================
+st.subheader("📝 Input teks klinis")
+
+default_text = voice_text if voice_text else "Pasien laki-laki 28 tahun demam 3 hari..."
+text = st.text_area("Teks klinis", value=default_text, height=150)
+
+# ============================================================
+#                 GENERATE SOAP
+# ============================================================
+if st.button("🧠 Generate SOAP"):
+    with st.spinner("Mengubah teks → SOAP…"):
+        url = "https://router.huggingface.co/v1/chat/completions"
+
+        headers = {
+            "Authorization": f"Bearer {HF_TOKEN}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": HF_MODEL,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Return ONLY valid JSON with keys Subjective, Objective, Assessment, Plan."
+                },
+                {
+                    "role": "user",
+                    "content": text
+                }
+            ],
+            "temperature": 0
+        }
+
+        r = requests.post(url, headers=headers, json=payload)
+        raw = r.json()["choices"][0]["message"]["content"]
+
+    S, O, A, P, ok = parse_soap(raw)
+
+    st.success("SOAP berhasil dibuat!")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        S = st.text_area("🟡 Subjective", S)
+        A = st.text_area("🟣 Assessment", A)
+    with col2:
+        O = st.text_area("🔵 Objective", O)
+        P = st.text_area("🟢 Plan", P)
+
+    st.divider()
+
+    # ============================================================
+    #                      PDF BUILDER
+    # ============================================================
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "SOAP Note", ln=1)
+    pdf.set_font("Arial", "", 12)
+    pdf.multi_cell(0, 8, f"Subjective:\n{S}")
+    pdf.multi_cell(0, 8, f"\nObjective:\n{O}")
+    pdf.multi_cell(0, 8, f"\nAssessment:\n{A}")
+    pdf.multi_cell(0, 8, f"\nPlan:\n{P}")
+
+    pdf_bytes = pdf.output(dest="S").encode("latin-1")
+
+    st.download_button(
+        "⬇ Download PDF",
+        data=pdf_bytes,
+        file_name="SOAP.pdf",
+        mime="application/pdf"
+    )
