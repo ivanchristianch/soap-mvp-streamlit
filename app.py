@@ -26,20 +26,13 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 # ============================================================
 def speech_to_text_openai(audio_bytes):
     try:
-        result = client.chat.completions.create(
-            model="gpt-4o-audio-transcribe",
-            messages=[
-                {"role": "user", "content": [
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "file": ("audio.wav", audio_bytes, "audio/wav")
-                        }
-                    }
-                ]}
-            ]
+        result = client.audio.transcriptions.create(
+            file=("audio.wav", audio_bytes, "audio/wav"),
+            model="gpt-4o-mini-transcribe"
         )
-        return result.choices[0].message["content"][0]["text"].strip()
+        return result.text.strip()
+    except Exception as e:
+        raise RuntimeError(f"Gagal transkripsi OpenAI: {e}")
 
     except Exception as e:
         raise RuntimeError(f"Gagal transkripsi OpenAI: {e}")
