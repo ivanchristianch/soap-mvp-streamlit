@@ -22,9 +22,12 @@ from openai import OpenAI
 client = OpenAI(api_key=OPENAI_API_KEY)
 
 # ============================================================
-#               OPENAI SPEECH TO TEXT (FIXED)
+#               OPENAI SPEECH TO TEXT (STABIL)
 # ============================================================
 def speech_to_text_openai(audio_bytes):
+    """
+    Konversi audio → teks pakai OpenAI.
+    """
     try:
         result = client.audio.transcriptions.create(
             file=("audio.wav", audio_bytes, "audio/wav"),
@@ -60,12 +63,14 @@ def extract_json_block(text: str):
     txt = text.strip()
     txt = re.sub(r"```(?:json)?", "", txt).replace("```", "").strip()
 
+    # coba parse langsung
     try:
         json.loads(txt)
         return txt
     except:
         pass
 
+    # cari blok {...} pertama yang seimbang
     start = txt.find("{")
     if start == -1:
         return None
@@ -85,8 +90,9 @@ def extract_json_block(text: str):
     if end is None:
         return None
 
-    candidate = txt[start:end+1]
+    candidate = txt[start:end + 1]
 
+    # coba lagi dengan ganti ' jadi "
     for cand in (candidate, candidate.replace("'", '"')):
         try:
             json.loads(cand)
@@ -98,6 +104,10 @@ def extract_json_block(text: str):
 
 
 def parse_soap(s: str):
+    """
+    Parse string model menjadi 4 komponen SOAP.
+    Fallback: kembalikan string asli di Subjective kalau gagal.
+    """
     block = extract_json_block(s)
     if block:
         try:
@@ -122,6 +132,13 @@ st.set_page_config(page_title="SOAP MVP", page_icon="🩺")
 st.title("🩺 SOAP Notation MVP")
 st.caption("🎤 Voice → Text → SOAP → PDF (OpenAI + HuggingFace)")
 
+# --- init session_state untuk teks klinis ---
+if "clinical_text" not in st.session_state:
+    st.session_state["clinical_text"] = "Masukkan keluhan pasien di sini..."
+
+# ============================================================
+#                 REKAM & TRANSKRIPSI SUARA
+# ============================================================
 st.subheader("🎙 Rekam anamnesis pasien")
 
 audio_obj = mic_recorder(
@@ -133,52 +150,38 @@ audio_obj = mic_recorder(
 )
 
 audio_bytes = _as_bytes(audio_obj)
-voice_text = None
 
-
-# ============================================================
-#                 TRANSKRIPSI SUARA
-# ============================================================
 if audio_bytes:
     st.audio(audio_bytes, format="audio/wav")
 
     with st.spinner("Mengubah suara menjadi teks (OpenAI)"):
         try:
             voice_text = speech_to_text_openai(audio_bytes)
+            # SIMPAN LANGSUNG ke session_state → supaya tidak hilang saat rerun
+            st.session_state["clinical_text"] = voice_text
             st.success("✔ Transkripsi selesai!")
         except Exception as e:
             st.error(f"Gagal transkripsi: {e}")
-
 
 # ============================================================
 #                 INPUT TEKS KLINIS
 # ============================================================
 st.subheader("📝 Input teks klinis")
 
-# 1. Jika ada transkripsi baru, simpan ke session_state
-if voice_text:
-    st.session_state["clinical_text"] = voice_text
-
-# 2. Jika belum ada session_state, isi default
-if "clinical_text" not in st.session_state:
-    st.session_state["clinical_text"] = "Masukkan keluhan pasien di sini..."
-
-# 3. Tampilkan text area (selalu sinkron)
+# Text area selalu terikat ke session_state["clinical_text"]
 text = st.text_area(
     "Teks klinis",
-    value=st.session_state["clinical_text"],
-    key="clinical_text_area",
+    key="clinical_text",   # otomatis baca/tulis ke st.session_state["clinical_text"]
     height=150
 )
-
 
 # ============================================================
 #                 GENERATE SOAP
 # ============================================================
 if st.button("🧠 Generate SOAP"):
 
-    # Update session state dengan teks terbaru
-    st.session_state["clinical_text"] = text
+    # pastikan text terbaru yang dipakai
+    text = st.session_state["clinical_text"]
 
     with st.spinner("Mengubah teks → SOAP…"):
         url = "https://router.huggingface.co/v1/chat/completions"
@@ -219,7 +222,6 @@ if st.button("🧠 Generate SOAP"):
         P = st.text_area("🟢 Plan", P)
 
     st.divider()
-
 
     # ============================================================
     #                      PDF BUILDER
