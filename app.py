@@ -34,11 +34,9 @@ def speech_to_text_openai(audio_bytes):
     except Exception as e:
         raise RuntimeError(f"Gagal transkripsi OpenAI: {e}")
 
-    except Exception as e:
-        raise RuntimeError(f"Gagal transkripsi OpenAI: {e}")
 
 # ============================================================
-#       Normalisasi output mic_recorder → bytes
+#        Normalisasi output mic_recorder → bytes
 # ============================================================
 def _as_bytes(a):
     if a is None:
@@ -50,6 +48,7 @@ def _as_bytes(a):
     if hasattr(a, "getvalue"):
         return a.getvalue()
     return None
+
 
 # ============================================================
 #      JSON Extractor untuk output SOAP dari HF
@@ -114,6 +113,7 @@ def parse_soap(s: str):
             pass
     return s, "", "", "", False
 
+
 # ============================================================
 #                        UI
 # ============================================================
@@ -135,6 +135,10 @@ audio_obj = mic_recorder(
 audio_bytes = _as_bytes(audio_obj)
 voice_text = None
 
+
+# ============================================================
+#                 TRANSKRIPSI SUARA
+# ============================================================
 if audio_bytes:
     st.audio(audio_bytes, format="audio/wav")
 
@@ -145,18 +149,37 @@ if audio_bytes:
         except Exception as e:
             st.error(f"Gagal transkripsi: {e}")
 
+
 # ============================================================
 #                 INPUT TEKS KLINIS
 # ============================================================
 st.subheader("📝 Input teks klinis")
 
-default_text = voice_text if voice_text else "Pasien laki-laki 28 tahun demam 3 hari..."
-text = st.text_area("Teks klinis", value=default_text, height=150)
+# 1. Jika ada transkripsi baru, simpan ke session_state
+if voice_text:
+    st.session_state["clinical_text"] = voice_text
+
+# 2. Jika belum ada session_state, isi default
+if "clinical_text" not in st.session_state:
+    st.session_state["clinical_text"] = "Masukkan keluhan pasien di sini..."
+
+# 3. Tampilkan text area (selalu sinkron)
+text = st.text_area(
+    "Teks klinis",
+    value=st.session_state["clinical_text"],
+    key="clinical_text_area",
+    height=150
+)
+
 
 # ============================================================
 #                 GENERATE SOAP
 # ============================================================
 if st.button("🧠 Generate SOAP"):
+
+    # Update session state dengan teks terbaru
+    st.session_state["clinical_text"] = text
+
     with st.spinner("Mengubah teks → SOAP…"):
         url = "https://router.huggingface.co/v1/chat/completions"
 
@@ -196,6 +219,7 @@ if st.button("🧠 Generate SOAP"):
         P = st.text_area("🟢 Plan", P)
 
     st.divider()
+
 
     # ============================================================
     #                      PDF BUILDER
