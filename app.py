@@ -25,9 +25,6 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 #               OPENAI SPEECH TO TEXT (STABIL)
 # ============================================================
 def speech_to_text_openai(audio_bytes):
-    """
-    Konversi audio → teks pakai OpenAI.
-    """
     try:
         result = client.audio.transcriptions.create(
             file=("audio.wav", audio_bytes, "audio/wav"),
@@ -63,14 +60,12 @@ def extract_json_block(text: str):
     txt = text.strip()
     txt = re.sub(r"```(?:json)?", "", txt).replace("```", "").strip()
 
-    # coba parse langsung
     try:
         json.loads(txt)
         return txt
     except:
         pass
 
-    # cari blok {...} pertama yang seimbang
     start = txt.find("{")
     if start == -1:
         return None
@@ -92,7 +87,6 @@ def extract_json_block(text: str):
 
     candidate = txt[start:end + 1]
 
-    # coba lagi dengan ganti ' jadi "
     for cand in (candidate, candidate.replace("'", '"')):
         try:
             json.loads(cand)
@@ -104,10 +98,6 @@ def extract_json_block(text: str):
 
 
 def parse_soap(s: str):
-    """
-    Parse string model menjadi 4 komponen SOAP.
-    Fallback: kembalikan string asli di Subjective kalau gagal.
-    """
     block = extract_json_block(s)
     if block:
         try:
@@ -130,9 +120,9 @@ def parse_soap(s: str):
 st.set_page_config(page_title="SOAP MVP", page_icon="🩺")
 
 st.title("🩺 SOAP Notation MVP")
-st.caption("🎤 Voice → Text → SOAP → PDF (OpenAI + HuggingFace)")
+st.caption("🎤 Voice → Text → SOAP → Diagnosis → PDF")
 
-# --- init session_state untuk teks klinis ---
+# init session state
 if "clinical_text" not in st.session_state:
     st.session_state["clinical_text"] = "Masukkan keluhan pasien di sini..."
 
@@ -154,10 +144,9 @@ audio_bytes = _as_bytes(audio_obj)
 if audio_bytes:
     st.audio(audio_bytes, format="audio/wav")
 
-    with st.spinner("Mengubah suara menjadi teks (OpenAI)"):
+    with st.spinner("Mengubah suara menjadi teks (OpenAI)…"):
         try:
             voice_text = speech_to_text_openai(audio_bytes)
-            # SIMPAN LANGSUNG ke session_state → supaya tidak hilang saat rerun
             st.session_state["clinical_text"] = voice_text
             st.success("✔ Transkripsi selesai!")
         except Exception as e:
@@ -168,22 +157,21 @@ if audio_bytes:
 # ============================================================
 st.subheader("📝 Input teks klinis")
 
-# Text area selalu terikat ke session_state["clinical_text"]
 text = st.text_area(
     "Teks klinis",
-    key="clinical_text",   # otomatis baca/tulis ke st.session_state["clinical_text"]
+    key="clinical_text",
     height=150
 )
+
 
 # ============================================================
 #                 GENERATE SOAP
 # ============================================================
 if st.button("🧠 Generate SOAP"):
 
-    # pastikan text terbaru yang dipakai
     text = st.session_state["clinical_text"]
 
-    with st.spinner("Mengubah teks → SOAP…"):
+    with st.spinner("Mengubah teks → SOAP + DIAGNOSIS…"):
         url = "https://router.huggingface.co/v1/chat/completions"
 
         headers = {
@@ -191,19 +179,34 @@ if st.button("🧠 Generate SOAP"):
             "Content-Type": "application/json"
         }
 
+        # =====================================================
+        #             SYSTEM MESSAGE SUPER INTELLIGENT
+        # =====================================================
+        system_prompt = """
+Kamu adalah asisten medis ahli.
+
+Tugasmu membuat SOAP NOTE dalam format JSON (Subjective, Objective, Assessment, Plan).
+
+RULES:
+- Subjective = riwayat keluhan pasien.
+- Objective = temuan pemeriksaan fisik/lab jika ada.
+- Assessment = DIAGNOSIS UTAMA berdasarkan data pasien.
+    • Jika diagnosis jelas: tulis diagnosis definitif (contoh: Appendicitis acuta).
+    • Jika masih DD: pilih diagnosis PALING MUNGKIN.
+    • Jangan masukkan detail pemeriksaan ke Assessment.
+    • Jangan pakai <br>, bullet, list panjang. Hanya diagnosis singkat.
+- Plan = rencana terapi / pemeriksaan yang sesuai dengan diagnosis.
+
+Output HANYA JSON valid.
+"""
+
         payload = {
             "model": HF_MODEL,
             "messages": [
-                {
-                    "role": "system",
-                    "content": "Return ONLY valid JSON with keys Subjective, Objective, Assessment, Plan."
-                },
-                {
-                    "role": "user",
-                    "content": text
-                }
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": text}
             ],
-            "temperature": 0
+            "temperature": 0.2
         }
 
         r = requests.post(url, headers=headers, json=payload)
@@ -213,10 +216,13 @@ if st.button("🧠 Generate SOAP"):
 
     st.success("SOAP berhasil dibuat!")
 
+    # ============================================================
+    #                 Tampilkan SOAP
+    # ============================================================
     col1, col2 = st.columns(2)
     with col1:
         S = st.text_area("🟡 Subjective", S)
-        A = st.text_area("🟣 Assessment", A)
+        A = st.text_area("🟣 Assessment (DIAGNOSIS)", A)
     with col2:
         O = st.text_area("🔵 Objective", O)
         P = st.text_area("🟢 Plan", P)
@@ -233,7 +239,7 @@ if st.button("🧠 Generate SOAP"):
     pdf.set_font("Arial", "", 12)
     pdf.multi_cell(0, 8, f"Subjective:\n{S}")
     pdf.multi_cell(0, 8, f"\nObjective:\n{O}")
-    pdf.multi_cell(0, 8, f"\nAssessment:\n{A}")
+    pdf.multi_cell(0, 8, f"\nAssessment (Diagnosis):\n{A}")
     pdf.multi_cell(0, 8, f"\nPlan:\n{P}")
 
     pdf_bytes = pdf.output(dest="S").encode("latin-1")
