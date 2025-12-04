@@ -139,4 +139,4 @@ voice_text = None
 if audio_bytes:
     st.audio(audio_bytes, format="audio/wav")
 
-    with st.spinner("Mengubah suara menjadi teks (OpenAI)…
+    with st.spinner("Mengubah suara menjadi teks (OpenAI)"):
