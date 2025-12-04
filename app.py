@@ -140,3 +140,8 @@ if audio_bytes:
     st.audio(audio_bytes, format="audio/wav")
 
     with st.spinner("Mengubah suara menjadi teks (OpenAI)"):
+        try:
+            voice_text = speech_to_text_openai(audio_bytes)
+            st.success("✔ Transkripsi selesai!")
+        except Exception as e:
+            st.error(f"Gagal transkripsi: {e}")
