@@ -27,7 +27,7 @@ client = OpenAI(api_key=OPENAI_API_KEY)
 def speech_to_text_openai(audio_bytes):
     try:
         result = client.audio.transcriptions.create(
-            model="gpt-4o-transcribe-1",
+            model="gpt-4o-mini-tts",
             file=("audio.wav", audio_bytes, "audio/wav")
         )
         return result.text.strip()
